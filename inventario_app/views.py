@@ -1,4 +1,6 @@
 from rest_framework import viewsets, status
+from django.db.models import Sum
+from django.db import transaction
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import Categoria, Producto, Cliente, Venta
@@ -66,20 +68,15 @@ class ProductoViewSet(viewsets.ModelViewSet):
    @action(detail=True, methods=['patch'])
    def update_stock(self, request, pk=None):
         producto = self.get_object()
-        cantidad_stock = request.data.get('cantidad_stock')
-
-        # Validar que cantidad_stock no sea None y sea no negativa
-        if cantidad_stock is None:
-            return Response({'error': 'cantidad_stock is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if cantidad_stock < 0:
-            return Response({'error': 'cantidad_stock must be non-negative'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Actualizar el stock del producto
-        producto.cantidad_stock = cantidad_stock
-        producto.save()
-        
-        return Response({'status': 'stock updated'}, status=status.HTTP_200_OK)
+        try:
+            cantidad_stock = int(request.data.get('cantidad_stock'))
+            if cantidad_stock < 0:
+                return Response({'error': 'cantidad_stock must be non-negative'}, status=status.HTTP_400_BAD_REQUEST)
+            producto.cantidad_stock = cantidad_stock
+            producto.save()
+            return Response({'status': 'stock updated'}, status=status.HTTP_200_OK)
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid cantidad_stock value'}, status=status.HTTP_400_BAD_REQUEST)
    
 
 class ClienteViewSet(viewsets.ModelViewSet):
@@ -113,26 +110,21 @@ class VentaViewSet(viewsets.ModelViewSet):
    serializer_class = VentaSerializer
 
    def create(self, request):
-       serializer = self.get_serializer(data=request.data)
-       serializer.is_valid(raise_exception=True)
-       
-       # Validate stock before creating sale
-       producto = serializer.validated_data['producto']
-       cantidad = serializer.validated_data['cantidad']
-       
-       if producto.cantidad_stock < cantidad:
-           return Response(
-               {'error': 'Insufficient stock'}, 
-               status=status.HTTP_400_BAD_REQUEST
-           )
-       
-       # Update product stock
-       producto.cantidad_stock -= cantidad
-       producto.save()
-       
-       # Create sale
-       self.perform_create(serializer)
-       return Response(serializer.data, status=status.HTTP_201_CREATED)
+    with transaction.atomic():
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        producto = serializer.validated_data['producto']
+        cantidad = serializer.validated_data['cantidad']
+        
+        if producto.cantidad_stock < cantidad:
+            return Response({'error': 'Insufficient stock'}, status=status.HTTP_400_BAD_REQUEST)
+
+        producto.cantidad_stock -= cantidad
+        producto.save()
+
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
    def update(self, request, *args, **kwargs):
        partial = kwargs.pop('partial', False)
@@ -152,5 +144,5 @@ class VentaViewSet(viewsets.ModelViewSet):
 
    @action(detail=False, methods=['get'])
    def ventas_por_producto(self, request):
-       ventas = Venta.objects.values('producto__nombre').annotate(total_ventas=Sum('cantidad'))
-       return Response(ventas)
+    ventas = Venta.objects.values('producto__nombre').annotate(total_ventas=Sum('cantidad'))
+    return Response(ventas)

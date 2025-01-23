@@ -4,11 +4,11 @@ from django.db.models import F
 from django.core.exceptions import ValidationError
 
 class Categoria(models.Model):
-    nombre = models.CharField(max_length=100)
+    nombre = models.CharField(max_length=100, unique=True)
     descripcion = models.TextField(blank=True)
 
 class Producto(models.Model):
-    nombre = models.CharField(max_length=200)
+    nombre = models.CharField(max_length=200, unique=True)
     descripcion = models.TextField()
     precio = models.DecimalField(max_digits=10, decimal_places=2)
     cantidad_stock = models.IntegerField()
@@ -22,7 +22,7 @@ class Producto(models.Model):
 
 
 class Cliente(models.Model):
-    nombre = models.CharField(max_length=100)
+    nombre = models.CharField(max_length=100, unique=True)
     apellido = models.CharField(max_length=100)
     email = models.EmailField(unique=True)
     telefono = models.CharField(max_length=20)
@@ -37,3 +37,8 @@ class Venta(models.Model):
         # Calcular el total basado en el precio del producto y la cantidad
         self.total = self.producto.precio * self.cantidad
         super(Venta, self).save(*args, **kwargs)
+
+    def clean(self):
+        if self.cantidad > self.producto.cantidad_stock:
+            raise ValidationError('No hay suficiente stock para realizar la venta.')
+        
